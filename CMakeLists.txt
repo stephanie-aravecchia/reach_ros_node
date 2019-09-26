@@ -1,10 +1,21 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(reach_ros_node)
 
-find_package(catkin REQUIRED COMPONENTS roslint)
+find_package(catkin REQUIRED COMPONENTS roslint message_generation)
+
+add_message_files(
+    FILES
+    ReachFixStatus.msg
+)
 
 catkin_python_setup()
-catkin_package()
+
+generate_messages()
+
+catkin_package(
+    CATKIN_DEPENDS message_runtime
+)
+
 
 install(PROGRAMS
    scripts/nmea_tcp_driver

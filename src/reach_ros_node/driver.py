@@ -37,10 +37,11 @@ import rospy
 
 from sensor_msgs.msg import NavSatFix, NavSatStatus, TimeReference
 from geometry_msgs.msg import TwistStamped
+from std_msgs.msg import String
 
 from reach_ros_node.checksum_utils import check_nmea_checksum
 import reach_ros_node.parser
-
+from reach_ros_node.msg import ReachFixStatus
 
 class RosNMEADriver(object):
     def __init__(self):
@@ -53,6 +54,12 @@ class RosNMEADriver(object):
         self.frame_gps = rospy.get_param('~frame_gps', 'gps')
         self.use_rostime = rospy.get_param('~use_rostime', True)
         self.use_rmc = rospy.get_param('~use_rmc', False)
+        # Publish NMEA messages, debug mode
+        self.publish_nmea = rospy.get_param('~publish_nmea', False)
+        if self.publish_nmea:
+            self.nmea_pub = rospy.Publisher('~nmea', String, queue_size=1)
+        #TODO: to be completed
+        self.use_mag_ori = rospy.get_param('~use_magnetic_orientation', False)
         # Flags for what information we have
         self.has_fix = False
         self.has_std = False
@@ -68,6 +75,10 @@ class RosNMEADriver(object):
     # Will process the nmea_string, and try to update our current state
     # Should try to publish as many messages as possible with the given data
     def process_line(self, nmea_string):
+        
+        # Publish the complete NMEA string, debug mode
+        if self.publish_nmea:
+            self.nmea_pub.publish(String(nmea_string))
         
         # Check if valid message
         if not check_nmea_checksum(nmea_string):
@@ -127,18 +138,35 @@ class RosNMEADriver(object):
             self.msg_fix.header.stamp = rospy.Time.from_sec(data['utc_time'])
         # Set the frame ID
         self.msg_fix.header.frame_id = self.frame_gps
-        # Set what our fix status should be
+
         gps_qual = data['fix_type']
-        if gps_qual == 0:
+        #GPS Quality indicator: https://www.trimble.com/oem_receiverhelp/v4.44/en/NMEA-0183messages_GGA.html
+        #new code
+        if gps_qual == 0:#Fix not valid
             self.msg_fix.status.status = NavSatStatus.STATUS_NO_FIX
-        elif gps_qual == 1:
+        elif gps_qual == 1:#GPS fix
             self.msg_fix.status.status = NavSatStatus.STATUS_FIX
-        elif gps_qual == 2:
+        elif gps_qual == 2:#Differential GPS fix, OmniSTAR VBS
             self.msg_fix.status.status = NavSatStatus.STATUS_SBAS_FIX
-        elif gps_qual in (4, 5):
-            self.msg_fix.status.status = NavSatStatus.STATUS_GBAS_FIX
+        elif gps_qual == 5:#Real-Time Kinematic, float integers, OmniSTAR XP/HP or Location RTK
+            #self.msg_fix.status.status = NavSatStatus.STATUS_GBAS_FIX
+            self.msg_fix.status.status = ReachFixStatus.STATUS_RTK_FLOAT
+        elif gps_qual == 4:#Real-Time Kinematic, fixed integers
+            #self.msg_fix.status.status = NavSatStatus.STATUS_GBAS_FIX
+            self.msg_fix.status.status = ReachFixStatus.STATUS_RTK_FIX
         else:
             self.msg_fix.status.status = NavSatStatus.STATUS_NO_FIX
+        #original code
+        #if gps_qual == 0:
+        #    self.msg_fix.status.status = NavSatStatus.STATUS_NO_FIX
+        #elif gps_qual == 1:
+        #    self.msg_fix.status.status = NavSatStatus.STATUS_FIX
+        #elif gps_qual == 2:
+        #    self.msg_fix.status.status = NavSatStatus.STATUS_SBAS_FIX
+        #elif gps_qual in (4, 5):
+        #    self.msg_fix.status.status = NavSatStatus.STATUS_GBAS_FIX
+        #else:
+        #    self.msg_fix.status.status = NavSatStatus.STATUS_NO_FIX
         self.msg_fix.status.service = NavSatStatus.SERVICE_GPS
         # Set our lat lon position
         latitude = data['latitude']
@@ -196,9 +224,27 @@ class RosNMEADriver(object):
         # Set the frame ID
         self.msg_vel.header.frame_id = self.frame_gps
         # Calculate the change in orientatoin
-        self.msg_vel.twist.linear.x = data['speed'] * math.sin(data['ori_true'])
-        self.msg_vel.twist.linear.y = data['speed'] * math.cos(data['ori_true'])
+        # Relative to true north
+        if not self.use_mag_ori:
+            self.msg_vel.twist.linear.x = data['speed'] * math.sin(data['ori_true'])
+            self.msg_vel.twist.linear.y = data['speed'] * math.cos(data['ori_true'])
+        # Relative to magnetic north
+        else:
+            self.msg_vel.twist.linear.x = data['speed'] * math.sin(data['ori_magnetic'])
+            self.msg_vel.twist.linear.y = data['speed'] * math.cos(data['ori_magnetic'])
         self.has_vel = True
+        #TODO use stuff with ori_magnetic
+# https://www.trimble.com/oem_receiverhelp/v4.44/en/NMEA-0183messages_VTG.html
+#0 	Message ID $GPVTG
+#1 	Track made good (degrees true)
+#2 	T: track made good is relative to true north
+#3 	Track made good (degrees magnetic)
+#4 	M: track made good is relative to magnetic north
+#5 	Speed, in knots
+#6 	N: speed is measured in knots
+#7 	Speed over ground in kilometers/hour (kph)
+#8 	K: speed over ground is measured in kph
+#9 	The checksum data, always begins with *
 
 
 
